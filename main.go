@@ -18,8 +18,9 @@ import (
 var (
 	to       = flag.String("to", "http://127.0.0.1:80", "the address and port for which to proxy requests to")
 	fromURL  = flag.String("from", "0.0.0.0:443", "the tcp address and port this proxy should listen for requests on")
-	certFile = flag.String("cert", "", "path to a tls certificate file. If not provided, ssl-proxy will generate one for you in ~/.ssl-proxy/")
-	keyFile  = flag.String("key", "", "path to a private key file. If not provided, ssl-proxy will generate one for you in ~/.ssl-proxy/")
+	pemFile  = flag.String("pem", "", "path to a file containing certificate and private key. If not provided, certFile and keyFile will be used")
+	certFile = flag.String("cert", "", "optional: path to a tls certificate file. If not provided, ssl-proxy will generate one")
+	keyFile  = flag.String("key", "", "optional: path to a private key file. If not provided, ssl-proxy will generate one")
 )
 
 const (
@@ -32,37 +33,44 @@ const (
 func main() {
 	flag.Parse()
 
-	validCertFile := *certFile != ""
-	validKeyFile := *keyFile != ""
+	// If PEM-File provided use it as cert and key file
+	validPemFile := fileExist(*pemFile)
+	if validPemFile {
+		*certFile = *pemFile
+		*keyFile = *pemFile
+	} else {
+		// check cert/key files
+		validCertFile := fileExist(*certFile)
+		validKeyFile := fileExist(*keyFile)
 
-	// Determine if we need to generate self-signed certs
-	if !validCertFile || !validKeyFile {
-		// Use default file paths
-		*certFile = DefaultCertFile
-		*keyFile = DefaultKeyFile
+		// Determine if we need to generate self-signed certs
+		if !validCertFile || !validKeyFile {
+			// Use default file paths
+			*certFile = DefaultCertFile
+			*keyFile = DefaultKeyFile
 
-		log.Printf("No existing cert or key specified, generating some self-signed certs for use (%s, %s)\n", *certFile, *keyFile)
+			log.Printf("No existing cert or key specified, generating some self-signed certs for use (%s, %s)\n", *certFile, *keyFile)
 
-		// Generate new keys
-		certBuf, keyBuf, fingerprint, err := gen.Keys(365 * 24 * time.Hour)
-		if err != nil {
-			log.Fatal("Error generating default keys", err)
+			// Generate new keys
+			certBuf, keyBuf, fingerprint, err := gen.Keys(365 * 24 * time.Hour)
+			if err != nil {
+				log.Fatal("Error generating default keys", err)
+			}
+
+			certOut, err := os.Create(*certFile)
+			if err != nil {
+				log.Fatal("Unable to create cert file", err)
+			}
+			certOut.Write(certBuf.Bytes())
+
+			keyOut, err := os.OpenFile(*keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+			if err != nil {
+				log.Fatal("Unable to create the key file", err)
+			}
+			keyOut.Write(keyBuf.Bytes())
+
+			log.Printf("SHA256 Fingerprint: % X", fingerprint)
 		}
-
-		certOut, err := os.Create(*certFile)
-		if err != nil {
-			log.Fatal("Unable to create cert file", err)
-		}
-		certOut.Write(certBuf.Bytes())
-
-		keyOut, err := os.OpenFile(*keyFile, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
-		if err != nil {
-			log.Fatal("Unable to create the key file", err)
-		}
-		keyOut.Write(keyBuf.Bytes())
-
-		log.Printf("SHA256 Fingerprint: % X", fingerprint)
-
 	}
 
 	// Ensure the to URL is in the right form
@@ -119,4 +127,13 @@ func main() {
 // TODO: if more colors used in the future, generalize or pull in an external pkg
 func green(in string) string {
 	return fmt.Sprintf("\033[0;32m%s\033[0;0m", in)
+}
+
+func fileExist(fileName string) bool {
+	fileInfo, err := os.Stat(fileName)
+	if err != nil {
+		return false
+	} else {
+		return fileInfo.Mode().IsRegular()
+	}
 }
