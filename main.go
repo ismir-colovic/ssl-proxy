@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,7 +17,7 @@ import (
 )
 
 var (
-	to           = flag.String("to", "http://127.0.0.1:80", "the address and port for which to proxy requests to")
+	to           = flag.String("to", "http://127.0.0.1:8080", "the address and port for which to proxy requests to")
 	fromURL      = flag.String("from", "0.0.0.0:443", "the tcp address and port this proxy should listen for requests on")
 	pemFile      = flag.String("pem", "", "path to a file containing certificate and private key. If not provided, certFile and keyFile will be used")
 	certFile     = flag.String("cert", "", "optional: path to a tls certificate file. If not provided, ssl-proxy will generate one")
@@ -95,15 +96,27 @@ func main() {
 
 	// Redirect http requests on port 80 to TLS port using https
 	if *redirectHTTP {
-		// Redirect to fromURL by default, unless a domain is specified--in that case, redirect using the public facing
-		// domain
+		// get port out of fromURL
+		u := *fromURL
+		if !strings.HasPrefix(u, HTTPPrefix) && !strings.HasPrefix(u, HTTPSPrefix) {
+			u = HTTPSPrefix + u
+		}
+		f, err := url.Parse(u)
+		if err != nil {
+			log.Fatal("Unable to parse 'from' url: ", err)
+		}
+		_, redirectPORT, err := net.SplitHostPort(f.Host)
+		if err != nil {
+			log.Fatal("Unable to split 'from' url to host and port port: ", err)
+		}
+
+		// Redirect to Hostname from http.Request and port fromPort
 		redirectURL := *fromURL
 		redirectTLS := func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, "https://"+redirectURL+r.RequestURI, http.StatusMovedPermanently)
+			http.Redirect(w, r, "https://"+r.Host+":"+redirectPORT+r.RequestURI, http.StatusMovedPermanently)
 		}
 		go func() {
-			log.Println(
-				fmt.Sprintf("Also redirecting https requests on port 80 to https requests on %s", redirectURL))
+			log.Println("Also redirecting requests on port 80 to https requests on", redirectURL)
 			err := http.ListenAndServe(":80", http.HandlerFunc(redirectTLS))
 			if err != nil {
 				log.Println("HTTP redirection server failure")
