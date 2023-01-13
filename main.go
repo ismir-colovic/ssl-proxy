@@ -16,11 +16,12 @@ import (
 )
 
 var (
-	to       = flag.String("to", "http://127.0.0.1:80", "the address and port for which to proxy requests to")
-	fromURL  = flag.String("from", "0.0.0.0:443", "the tcp address and port this proxy should listen for requests on")
-	pemFile  = flag.String("pem", "", "path to a file containing certificate and private key. If not provided, certFile and keyFile will be used")
-	certFile = flag.String("cert", "", "optional: path to a tls certificate file. If not provided, ssl-proxy will generate one")
-	keyFile  = flag.String("key", "", "optional: path to a private key file. If not provided, ssl-proxy will generate one")
+	to           = flag.String("to", "http://127.0.0.1:80", "the address and port for which to proxy requests to")
+	fromURL      = flag.String("from", "0.0.0.0:443", "the tcp address and port this proxy should listen for requests on")
+	pemFile      = flag.String("pem", "", "path to a file containing certificate and private key. If not provided, certFile and keyFile will be used")
+	certFile     = flag.String("cert", "", "optional: path to a tls certificate file. If not provided, ssl-proxy will generate one")
+	keyFile      = flag.String("key", "", "optional: path to a private key file. If not provided, ssl-proxy will generate one")
+	redirectHTTP = flag.Bool("redirectHTTP", true, "if true, redirects http requests from port 80 to https at your fromURL")
 )
 
 const (
@@ -91,6 +92,25 @@ func main() {
 	mux.Handle("/", p)
 
 	log.Printf(green("Proxying calls from https://%s (SSL/TLS) to %s"), *fromURL, toURL)
+
+	// Redirect http requests on port 80 to TLS port using https
+	if *redirectHTTP {
+		// Redirect to fromURL by default, unless a domain is specified--in that case, redirect using the public facing
+		// domain
+		redirectURL := *fromURL
+		redirectTLS := func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "https://"+redirectURL+r.RequestURI, http.StatusMovedPermanently)
+		}
+		go func() {
+			log.Println(
+				fmt.Sprintf("Also redirecting https requests on port 80 to https requests on %s", redirectURL))
+			err := http.ListenAndServe(":80", http.HandlerFunc(redirectTLS))
+			if err != nil {
+				log.Println("HTTP redirection server failure")
+				log.Println(err)
+			}
+		}()
+	}
 
 	// Configure TLS to reasonably secure defaults
 	tlsCfg := new(tls.Config)
