@@ -3,8 +3,8 @@ package main
 import (
 	"crypto/tls"
 	"flag"
-	"fmt"
 	"log"
+	"log/syslog"
 	"net"
 	"net/http"
 	"net/url"
@@ -34,6 +34,13 @@ const (
 
 func main() {
 	flag.Parse()
+
+	// Configure logger to write to the syslog. You could do this in init(), too.
+	logwriter, e := syslog.New(syslog.LOG_NOTICE, "SSL-PROXY")
+	if e == nil {
+		log.SetOutput(logwriter)
+		log.SetFlags(log.Flags() &^ (log.Ldate | log.Ltime))
+	}
 
 	// If PEM-File provided use it as cert and key file
 	validPemFile := fileExist(*pemFile)
@@ -92,7 +99,7 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/", p)
 
-	log.Printf(green("Proxying calls from https://%s (SSL/TLS) to %s"), *fromURL, toURL)
+	log.Printf("Proxying calls from https://%s (SSL/TLS) to %s", *fromURL, toURL)
 
 	// Redirect http requests on port 80 to TLS port using https
 	if *redirectHTTP {
@@ -153,13 +160,6 @@ func main() {
 		TLSConfig: tlsCfg,
 	}
 	log.Fatal(proxyServer.ListenAndServeTLS(*certFile, *keyFile))
-}
-
-// green takes an input string and returns it with the proper ANSI escape codes to render it green-colored
-// in a supported terminal.
-// TODO: if more colors used in the future, generalize or pull in an external pkg
-func green(in string) string {
-	return fmt.Sprintf("\033[0;32m%s\033[0;0m", in)
 }
 
 func fileExist(fileName string) bool {
